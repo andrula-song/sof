@@ -14,8 +14,6 @@
 #include <sof/math/numbers.h>
 #include <stdint.h>
 
-#if CONFIG_NUMBERS_GCD
-
 /* This function returns the greatest common divisor of two numbers
  * If both parameters are 0, gcd(0, 0) returns 0
  * If first parameters is 0 or second parameter is 0, gcd(0, b) returns b
@@ -75,7 +73,6 @@ int gcd(int a, int b)
 	return a << k;
 }
 
-#endif /* CONFIG_NUMBERS_GCD */
 
 #if CONFIG_NUMBERS_VECTOR_FIND
 
@@ -176,4 +173,58 @@ uint32_t crc32(uint32_t base, const void *data, uint32_t bytes)
 	}
 
 	return ~crc;
+}
+
+/**
+ * Find the last (most-significant) set bit in word x,
+ * https://www.kernel.org/doc/htmldocs/kernel-api/API-fls.html
+ * fls(0) is 0, fls(1) is 1, fls(0x80000000) = 32.
+ */
+int fls(int x)
+{
+	int r = 32;
+
+	if (!x)
+		return 0;
+	if (!(x & 0xffff0000u)) {
+		x <<= 16;
+		r -= 16;
+	}
+	if (!(x & 0xff000000u)) {
+		x <<= 8;
+		r -= 8;
+	}
+	if (!(x & 0xf0000000u)) {
+		x <<= 4;
+		r -= 4;
+	}
+	if (!(x & 0xc0000000u)) {
+		x <<= 2;
+		r -= 2;
+	}
+	if (!(x & 0x80000000u)) {
+		x <<= 1;
+		r -= 1;
+	}
+	return r;
+}
+
+/**
+ * Return the frames that meet the align requirement of both byte_align and
+ * frame_align_req.
+ * @param byte_align Processing byte alignment requirement.
+ * @param frame_align_req Processing frames alignment requirement.
+ * @param frame_size Size of the frame in bytes.
+ * @return frame number.
+ */
+uint32_t frame_align(uint32_t byte_align, uint32_t frame_align_req,
+		     uint32_t frame_size)
+{
+	/** calculate the frame number meets the requirement of byte_align
+	 * alignment
+	 */
+	uint32_t frame_num = byte_align / gcd(byte_align, frame_size);
+
+	/** return the lcm of frame_num and frame_align_req*/
+	return frame_align_req * frame_num / gcd(frame_num, frame_align_req);
 }

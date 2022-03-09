@@ -60,6 +60,13 @@ struct audio_stream {
 	uint32_t rate;		/**< Number of data frames per second [Hz] */
 	uint16_t channels;	/**< Number of samples in each frame */
 
+	/**alignment limit of stream copy, alignment is the frame_align_shift-th
+	 * power of 2. And frame_align_shift should be set in component prepare
+	 * or param functions
+	 */
+	uint16_t frame_align_shift;
+	uint16_t frame_align;
+
 	bool overrun_permitted; /**< indicates whether overrun is permitted */
 	bool underrun_permitted; /**< indicates whether underrun is permitted */
 };
@@ -203,6 +210,30 @@ static inline uint32_t audio_stream_sample_bytes(const struct audio_stream *buf)
 }
 
 /**
+ * Set frame_align_shift and frame_align of stream according to byte_align and
+ * frame_align_req alignment requirement, and these two feature will be used in
+ * audio_stream_get_avail_frames_aligned and audio_stream_get_free_frames_aligned
+ * to calculate the available frames.
+ * @param byte_align Processing byte alignment requirement.
+ * @param frame_align_req Processing frames alignment requirement.
+ * @param stream Stream structure (sink or source) which to be set.
+ */
+static inline void audio_processing_aligned_set(uint32_t byte_align,
+						uint32_t frame_align_req,
+						struct audio_stream *stream)
+{
+	uint32_t process_size;
+	uint32_t frame_size = audio_stream_frame_bytes(stream);
+
+	stream->frame_align = frame_align(byte_align, frame_align_req, frame_size);
+	process_size = stream->frame_align * frame_size;
+	if (is_power_of_2(process_size))
+		stream->frame_align_shift = fls(process_size) - 1;
+	else
+		stream->frame_align_shift = fls(process_size);
+}
+
+/**
  * Calculates period size in bytes based on component stream's parameters.
  * @param buf Component buffer.
  * @param frames Number of processing frames.
@@ -295,6 +326,21 @@ audio_stream_get_avail_frames(const struct audio_stream *stream)
 }
 
 /**
+ * Calculates available data in frames aligned, the stream->frame_align_shift-th
+ * power of 2 is the "frame byte" which is not less than stream->frame_align
+ * * audio_stream_frame_bytes(stream), using right shift instead of division,
+ * handling underrun_permitted behaviour
+ * @param stream Stream pointer
+ * @return amount of data available for processing in frames
+ */
+static inline uint32_t
+audio_stream_get_avail_frames_aligned(const struct audio_stream *stream)
+{
+	return (audio_stream_get_avail_bytes(stream) >> stream->frame_align_shift)
+		 * stream->frame_align;
+}
+
+/**
  * Calculates free space in bytes, handling overrun_permitted behaviour
  * @param stream Stream pointer
  * @return amount of space free in bytes
@@ -336,6 +382,21 @@ audio_stream_get_free_frames(const struct audio_stream *stream)
 {
 	return audio_stream_get_free_bytes(stream) /
 		audio_stream_frame_bytes(stream);
+}
+
+/**
+ * Calculates free space in frames aligned. the stream->frame_align_shift-th
+ * power of 2 is the "frame byte" which is not less than stream->frame_align
+ * * audio_stream_frame_bytes(stream), using right shift instead of division,
+ * handling underrun_permitted behaviour
+ * @param stream Stream pointer
+ * @return amount of space free in frames
+ */
+static inline uint32_t
+audio_stream_get_free_frames_aligned(const struct audio_stream *stream)
+{
+	return (audio_stream_get_free_bytes(stream) >> stream->frame_align_shift)
+		 * stream->frame_align;
 }
 
 /**
@@ -399,6 +460,24 @@ audio_stream_avail_frames(const struct audio_stream *source,
 {
 	uint32_t src_frames = audio_stream_get_avail_frames(source);
 	uint32_t sink_frames = audio_stream_get_free_frames(sink);
+
+	return MIN(src_frames, sink_frames);
+}
+
+/**
+ * Computes maximum number of frames aligned that can be copied from
+ * source buffer to sink buffer, verifying number of available source
+ * frames vs. free space available in sink.
+ * @param source Source buffer.
+ * @param sink Sink buffer.
+ * @return Number of frames.
+ */
+static inline uint32_t
+audio_stream_avail_frames_aligned(const struct audio_stream *source,
+				  const struct audio_stream *sink)
+{
+	uint32_t src_frames = audio_stream_get_avail_frames_aligned(source);
+	uint32_t sink_frames = audio_stream_get_free_frames_aligned(sink);
 
 	return MIN(src_frames, sink_frames);
 }

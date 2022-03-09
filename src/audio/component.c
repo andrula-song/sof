@@ -156,6 +156,16 @@ void comp_get_copy_limits(struct comp_buffer *source, struct comp_buffer *sink,
 	cl->sink_bytes = cl->frames * cl->sink_frame_bytes;
 }
 
+void comp_get_copy_limits_frame_aligned(struct comp_buffer *source,
+					struct comp_buffer *sink, struct comp_copy_limits *cl)
+{
+	cl->frames = audio_stream_avail_frames_aligned(&source->stream, &sink->stream);
+	cl->source_frame_bytes = audio_stream_frame_bytes(&source->stream);
+	cl->sink_frame_bytes = audio_stream_frame_bytes(&sink->stream);
+	cl->source_bytes = cl->frames * cl->source_frame_bytes;
+	cl->sink_bytes = cl->frames * cl->sink_frame_bytes;
+}
+
 /** \brief Struct handler for large component configs */
 struct comp_data_blob_handler {
 	struct comp_dev *dev;	/**< audio component device */

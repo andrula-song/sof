@@ -97,6 +97,10 @@ int norm_int32(int32_t val);
 
 uint32_t crc32(uint32_t base, const void *data, uint32_t bytes);
 
+int fls(int x);
+uint32_t frame_align(uint32_t byte_align, uint32_t frame_align_req,
+		     uint32_t frame_size);
+
 /* merges two 16-bit values into a single 32-bit value */
 #define merge_16b16b(high, low) (((uint32_t)(high) << 16) | \
 				 ((low) & 0xFFFF))

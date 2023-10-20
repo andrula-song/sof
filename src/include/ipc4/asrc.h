@@ -118,19 +118,9 @@ enum ipc4_asrc_features {
 
 struct ipc4_asrc_module_cfg {
 	struct ipc4_base_module_cfg base;
-	/* ASRC output sampling frequency. */
-	enum ipc4_sampling_frequency out_freq;
-
-	/* Mask of allowed ASRC features:
-	 * - BITS 0-1 (ASRC mode):
-	 *	a. 0 1 - Playback mode / PUSH mode
-	 *	b. 1 0 - Capture mode / PULL mode
-	 *
-	 * - BIT 4 (Disable Jitter Buffer):
-	 *  a. 0 - Jitter buffer enabled
-	 *  b. 1 - Jitter buffer disabled
-	 */
-	uint32_t asrc_mode;
+	uint32_t sink_rate;
+	uint32_t asynchronous_mode;
+	uint32_t operation_mode;
 } __packed __aligned(4);
 
 #endif

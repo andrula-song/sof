@@ -31,6 +31,7 @@
 #include <stdint.h>
 
 #if CONFIG_IPC_MAJOR_4
+#include <sof/audio/module_adapter/module/generic.h>
 #include <ipc4/base-config.h>
 #include <ipc4/asrc.h>
 #endif
@@ -299,17 +300,17 @@ static inline uint32_t asrc_get_source_rate(const struct ipc4_asrc_module_cfg *i
 
 static inline uint32_t asrc_get_sink_rate(const struct ipc4_asrc_module_cfg *ipc_asrc)
 {
-	return ipc_asrc->out_freq;
+	return ipc_asrc->sink_rate;
 }
 
 static inline uint32_t asrc_get_operation_mode(const struct ipc4_asrc_module_cfg *ipc_asrc)
 {
-	return ipc_asrc->asrc_mode & (1 << IPC4_MOD_ASRC_PUSH_MODE) ? ASRC_OM_PUSH : ASRC_OM_PULL;
+	return ipc_asrc->operation_mode;
 }
 
 static inline bool asrc_get_asynchronous_mode(const struct ipc4_asrc_module_cfg *ipc_asrc)
 {
-	return false;
+	return ipc_asrc->asynchronous_mode;
 }
 
 static int asrc_get_attribute(struct comp_dev *dev, uint32_t type, void *value)

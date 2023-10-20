@@ -646,6 +646,56 @@ static int asrc_dai_find(struct comp_dev *dev, struct comp_data *cd)
 	return 0;
 }
 
+#if CONFIG_IPC_MAJOR_4
+static int asrc_dai_configure_timestamp(struct comp_data *cd)
+{
+	if (cd->dai_dev) {
+		struct processing_module *mod = comp_get_drvdata(cd->dai_dev);
+		struct module_data *md = &mod->priv;
+
+		return md->ops->endpoint_ops->dai_ts_config(cd->dai_dev);
+	}
+
+	return -EINVAL;
+}
+
+static int asrc_dai_start_timestamp(struct comp_data *cd)
+{
+	if (cd->dai_dev) {
+		struct processing_module *mod = comp_get_drvdata(cd->dai_dev);
+		struct module_data *md = &mod->priv;
+
+		return md->ops->endpoint_ops->dai_ts_start(cd->dai_dev);
+	}
+
+	return -EINVAL;
+}
+
+static int asrc_dai_stop_timestamp(struct comp_data *cd)
+{
+	if (cd->dai_dev) {
+		struct processing_module *mod = comp_get_drvdata(cd->dai_dev);
+		struct module_data *md = &mod->priv;
+
+		return md->ops->endpoint_ops->dai_ts_stop(cd->dai_dev);
+	}
+
+	return -EINVAL;
+}
+
+static int asrc_dai_get_timestamp(struct comp_data *cd,
+				  struct dai_ts_data *tsd)
+{
+	if (cd->dai_dev) {
+		struct processing_module *mod = comp_get_drvdata(cd->dai_dev);
+		struct module_data *md = &mod->priv;
+
+		return md->ops->endpoint_ops->dai_ts_get(cd->dai_dev, tsd);
+	}
+
+	return -EINVAL;
+}
+#else
 static int asrc_dai_configure_timestamp(struct comp_data *cd)
 {
 	if (cd->dai_dev)
@@ -681,7 +731,7 @@ static int asrc_dai_stop_timestamp(struct comp_data *cd)
 
 	return cd->dai_dev->drv->ops.dai_ts_get(cd->dai_dev, tsd);
 }
-
+#endif
 static int asrc_trigger(struct comp_dev *dev, int cmd)
 {
 	struct comp_data *cd = comp_get_drvdata(dev);

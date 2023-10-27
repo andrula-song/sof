@@ -29,12 +29,9 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#if CONFIG_IPC_MAJOR_4
 #include <sof/audio/module_adapter/module/generic.h>
 #include <ipc4/base-config.h>
 #include <ipc4/asrc.h>
-#endif
 
 /* Simple count value to prevent first delta timestamp
  * from being input to low-pass filter.
@@ -48,35 +45,23 @@
 #define COEF_C1		Q_CONVERT_FLOAT(0.01, 30)
 #define COEF_C2		Q_CONVERT_FLOAT(0.99, 30)
 
-typedef void (*asrc_proc_func)(struct comp_dev *dev,
+typedef void (*asrc_proc_func)(struct processing_module *mod,
 			       const struct audio_stream *source,
 			       struct audio_stream *sink,
 			       int *consumed,
 			       int *produced);
 
-static const struct comp_driver comp_asrc;
-
 LOG_MODULE_REGISTER(asrc, CONFIG_SOF_LOG_LEVEL);
 
-#ifndef CONFIG_IPC_MAJOR_4
-/* c8ec72f6-8526-4faf-9d39-a23d0b541de2 */
-DECLARE_SOF_RT_UUID("asrc", asrc_uuid, 0xc8ec72f6, 0x8526, 0x4faf,
-		    0x9d, 0x39, 0xa2, 0x3d, 0x0b, 0x54, 0x1d, 0xe2);
-#else
 /* 66b4402d-b468-42f2-81a7-b37121863dd4 */
 DECLARE_SOF_RT_UUID("asrc", asrc_uuid, 0x66b4402d, 0xb468, 0x42f2,
 		    0x81, 0xa7, 0xb3, 0x71, 0x21, 0x86, 0x3d, 0xd4);
-#endif
 
 DECLARE_TR_CTX(asrc_tr, SOF_UUID(asrc_uuid), LOG_LEVEL_INFO);
 
 /* asrc component private data */
 struct comp_data {
-#if CONFIG_IPC_MAJOR_4
 	struct ipc4_asrc_module_cfg ipc_config;
-#else
-	struct ipc_config_asrc ipc_config;
-#endif
 	struct asrc_farrow *asrc_obj;	/* ASRC core data */
 	struct comp_dev *dai_dev;	/* Associated DAI component */
 	enum asrc_operation_mode mode;  /* Control for push or pull mode */
@@ -122,12 +107,13 @@ static inline void src_inc_wrap_s16(int16_t **ptr, int16_t *end, size_t size)
 }
 
 /* A fast copy function for same in and out rate */
-static void src_copy_s32(struct comp_dev *dev,
+static void src_copy_s32(struct processing_module *mod,
 			 const struct audio_stream *source,
 			 struct audio_stream *sink,
 			 int *n_read, int *n_written)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	int32_t *buf;
 	int32_t *src = audio_stream_get_rptr(source);
 	int32_t *snk = audio_stream_get_wptr(sink);
@@ -194,12 +180,13 @@ static void src_copy_s32(struct comp_dev *dev,
 	*n_written = out_frames;
 }
 
-static void src_copy_s16(struct comp_dev *dev,
+static void src_copy_s16(struct processing_module *mod,
 			 const struct audio_stream *source,
 			 struct audio_stream *sink,
 			 int *n_read, int *n_written)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	int16_t *src = audio_stream_get_rptr(source);
 	int16_t *snk = audio_stream_get_wptr(sink);
 	int16_t *buf;
@@ -272,116 +259,52 @@ static void src_copy_s16(struct comp_dev *dev,
 	*n_written = out_frames;
 }
 
-#ifndef CONFIG_IPC_MAJOR_4
-static inline uint32_t asrc_get_source_rate(const struct ipc_config_asrc *ipc_asrc)
+static int asrc_init(struct processing_module *mod)
 {
-	return ipc_asrc->source_rate;
-}
+	struct comp_dev *dev = mod->dev;
+	struct module_data *mod_data = &mod->priv;
+	const struct ipc4_asrc_module_cfg *ipc_asrc =  mod_data->cfg.init_data;
 
-static inline uint32_t asrc_get_sink_rate(const struct ipc_config_asrc *ipc_asrc)
-{
-	return ipc_asrc->sink_rate;
-}
+	struct comp_data *cd;
 
-static inline uint32_t asrc_get_operation_mode(const struct ipc_config_asrc *ipc_asrc)
-{
-	return ipc_asrc->operation_mode;
-}
+	comp_info(dev, "asrc_new()");
 
-static inline bool asrc_get_asynchronous_mode(const struct ipc_config_asrc *ipc_asrc)
-{
-	return ipc_asrc->asynchronous_mode;
-}
-#else
-static inline uint32_t asrc_get_source_rate(const struct ipc4_asrc_module_cfg *ipc_asrc)
-{
-	return ipc_asrc->base.audio_fmt.sampling_frequency;
-}
+	comp_info(dev, "asrc_new(), source_rate=%d, sink_rate=%d, asynchronous_mode=%d, operation_mode=%d",
+		     ipc_asrc->base.audio_fmt.sampling_frequency, ipc_asrc->sink_rate,
+		     ipc_asrc->asynchronous_mode, ipc_asrc->operation_mode);
 
-static inline uint32_t asrc_get_sink_rate(const struct ipc4_asrc_module_cfg *ipc_asrc)
-{
-	return ipc_asrc->sink_rate;
-}
-
-static inline uint32_t asrc_get_operation_mode(const struct ipc4_asrc_module_cfg *ipc_asrc)
-{
-	return ipc_asrc->operation_mode;
-}
-
-static inline bool asrc_get_asynchronous_mode(const struct ipc4_asrc_module_cfg *ipc_asrc)
-{
-	return ipc_asrc->asynchronous_mode;
-}
-
-static int asrc_get_attribute(struct comp_dev *dev, uint32_t type, void *value)
-{
-	struct comp_data *cd = comp_get_drvdata(dev);
-
-	switch (type) {
-	case COMP_ATTR_BASE_CONFIG:
-		*(struct ipc4_base_module_cfg *)value = cd->ipc_config.base;
-		break;
-	default:
+	/* validate init data - either SRC sink or source rate must be set */
+	if (ipc_asrc->base.audio_fmt.sampling_frequency == 0 && ipc_asrc->sink_rate == 0) {
+		comp_cl_err(&comp_asrc, "asrc_new(), sink and source rates are not set");
 		return -EINVAL;
 	}
 
-	return 0;
-}
-#endif
-
-static struct comp_dev *asrc_new(const struct comp_driver *drv,
-				 const struct comp_ipc_config *config,
-				 const void *spec)
-{
-	struct comp_dev *dev;
-#ifndef CONFIG_IPC_MAJOR_4
-	const struct ipc_config_asrc *ipc_asrc = spec;
-#else
-	const struct ipc4_asrc_module_cfg *ipc_asrc = spec;
-#endif
-	struct comp_data *cd;
-
-	comp_cl_info(&comp_asrc, "asrc_new()");
-
-	comp_cl_info(&comp_asrc, "asrc_new(), source_rate=%d, sink_rate=%d, asynchronous_mode=%d, operation_mode=%d",
-		     asrc_get_source_rate(ipc_asrc), asrc_get_sink_rate(ipc_asrc),
-		     asrc_get_asynchronous_mode(ipc_asrc), asrc_get_operation_mode(ipc_asrc));
-
-	/* validate init data - either SRC sink or source rate must be set */
-	if (asrc_get_source_rate(ipc_asrc) == 0 && asrc_get_sink_rate(ipc_asrc) == 0) {
-		comp_cl_err(&comp_asrc, "asrc_new(), sink and source rates are not set");
-		return NULL;
-	}
-
-	dev = comp_alloc(drv, sizeof(*dev));
-	if (!dev)
-		return NULL;
-	dev->ipc_config = *config;
-
 	cd = rzalloc(SOF_MEM_ZONE_RUNTIME, 0, SOF_MEM_CAPS_RAM, sizeof(*cd));
-	if (!cd) {
-		rfree(dev);
-		return NULL;
-	}
+	if (!cd)
+		return -ENOMEM;
 
-	comp_set_drvdata(dev, cd);
-	cd->ipc_config = *ipc_asrc;
+	mod_data->private = cd;
+	memcpy_s(&cd->ipc_config, sizeof(cd->ipc_config), ipc_asrc, sizeof(cd->ipc_config));
 
 	/* Get operation mode:
 	 * With OM_PUSH (0) use fixed input frames count, variable output.
 	 * With OM_PULL (1) use fixed output frames count, variable input.
 	 */
-	cd->mode = asrc_get_operation_mode(ipc_asrc);
+	cd->mode = ipc_asrc->operation_mode;
 
 	/* Use skew tracking for DAI if it was requested. The skew
 	 * is initialized here to zero. It is set later in prepare() to
 	 * to 1.0 if there is no filtered skew factor from previous run.
 	 */
-	cd->track_drift = asrc_get_asynchronous_mode(ipc_asrc);
-	cd->skew = 0;
+	cd->track_drift = ipc_asrc->asynchronous_mode;
 
-	dev->state = COMP_STATE_READY;
-	return dev;
+	cd->source_rate = ipc_asrc->base.audio_fmt.sampling_frequency;
+	cd->sink_rate = ipc_asrc->sink_rate;
+	cd->skew = 0;
+	mod->skip_src_buffer_invalidate = true;
+	mod->skip_sink_buffer_writeback = true;
+
+	return 0;
 }
 
 static int asrc_initialize_buffers(struct asrc_farrow *src_obj)
@@ -454,9 +377,10 @@ static void asrc_release_buffers(struct asrc_farrow *src_obj)
 		}
 }
 
-static void asrc_free(struct comp_dev *dev)
+static int asrc_free(struct processing_module *mod)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 
 	comp_info(dev, "asrc_free()");
 
@@ -464,34 +388,25 @@ static void asrc_free(struct comp_dev *dev)
 	asrc_release_buffers(cd->asrc_obj);
 	rfree(cd->asrc_obj);
 	rfree(cd);
-	rfree(dev);
+	return 0;
+
 }
 
-static int asrc_ctrl_cmd(struct comp_dev *dev, struct sof_ipc_ctrl_data *cdata)
+
+static int asrc_set_config(struct processing_module *mod, uint32_t config_id,
+				enum module_cfg_fragment_position pos, uint32_t data_offset_size,
+				const uint8_t *fragment, size_t fragment_size, uint8_t *response,
+				size_t response_size)
 {
-	comp_err(dev, "asrc_ctrl_cmd()");
+	comp_err(mod->dev, "asrc_set_config()");
 	return -EINVAL;
 }
 
-/* used to pass standard and bespoke commands (with data) to component */
-static int asrc_cmd(struct comp_dev *dev, int cmd, void *data,
-		    int max_data_size)
+static int asrc_verify_params(struct processing_module *mod)
 {
-	struct sof_ipc_ctrl_data *cdata = ASSUME_ALIGNED(data, 4);
-	int ret = 0;
-
-	comp_info(dev, "asrc_cmd()");
-
-	if (cmd == COMP_CMD_SET_VALUE)
-		ret = asrc_ctrl_cmd(dev, cdata);
-
-	return ret;
-}
-
-static int asrc_verify_params(struct comp_dev *dev,
-			      struct sof_ipc_stream_params *params)
-{
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct sof_ipc_stream_params *params = mod->stream_params;
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	int ret;
 
 	comp_dbg(dev, "asrc_verify_params()");
@@ -502,17 +417,9 @@ static int asrc_verify_params(struct comp_dev *dev,
 	 * src->source/sink_rate = 0 means that source/sink rate can vary.
 	 */
 	if (dev->direction == SOF_IPC_STREAM_PLAYBACK) {
-		if (asrc_get_source_rate(&cd->ipc_config) &&
-		    params->rate != asrc_get_source_rate(&cd->ipc_config)) {
+		if (cd->sink_rate && params->rate != cd->sink_rate) {
 			comp_err(dev, "asrc_verify_params(): runtime stream pcm rate %u does not match rate %u fetched from ipc.",
-				 params->rate, asrc_get_source_rate(&cd->ipc_config));
-			return -EINVAL;
-		}
-	} else {
-		if (asrc_get_sink_rate(&cd->ipc_config) &&
-		    params->rate != asrc_get_sink_rate(&cd->ipc_config)) {
-			comp_err(dev, "asrc_verify_params(): runtime stream pcm rate %u does not match rate %u fetched from ipc.",
-				 params->rate, asrc_get_sink_rate(&cd->ipc_config));
+				 params->rate, cd->sink_rate);
 			return -EINVAL;
 		}
 	}
@@ -529,44 +436,30 @@ static int asrc_verify_params(struct comp_dev *dev,
 }
 
 /* set component audio stream parameters */
-/* set component audio stream parameters */
-static int asrc_params(struct comp_dev *dev,
-		       struct sof_ipc_stream_params *pcm_params)
+static int asrc_params(struct processing_module *mod)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct sof_ipc_stream_params *pcm_params = mod->stream_params;
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	struct comp_buffer *sourceb, *sinkb;
 	int err;
 
 	comp_info(dev, "asrc_params()");
 
-#if CONFIG_IPC_MAJOR_4
 	ipc4_base_module_cfg_to_stream_params(&cd->ipc_config.base, pcm_params);
-#endif
-
-	err = asrc_verify_params(dev, pcm_params);
-	if (err < 0) {
-		comp_err(dev, "asrc_params(): pcm params verification failed.");
-		return -EINVAL;
-	}
 
 	sourceb = list_first_item(&dev->bsource_list, struct comp_buffer,
 				  sink_list);
 	sinkb = list_first_item(&dev->bsink_list, struct comp_buffer,
 				source_list);
 
-#if CONFIG_IPC_MAJOR_4
 	/* update the source/sink buffer formats. Sink rate will be modified below */
 	ipc4_update_buffer_format(sourceb, &cd->ipc_config.base.audio_fmt);
 	ipc4_update_buffer_format(sinkb, &cd->ipc_config.base.audio_fmt);
-#endif
 
 	/* Don't change sink rate if value from IPC is 0 (auto detect) */
-	if (asrc_get_sink_rate(&cd->ipc_config))
-		audio_stream_set_rate(&sinkb->stream, asrc_get_sink_rate(&cd->ipc_config));
-
-	/* set source/sink_frames/rate */
-	cd->source_rate = audio_stream_get_rate(&sourceb->stream);
-	cd->sink_rate = audio_stream_get_rate(&sinkb->stream);
+	if (cd->sink_rate)
+		audio_stream_set_rate(&sinkb->stream, cd->sink_rate);
 
 	if (!cd->sink_rate) {
 		comp_err(dev, "asrc_params(), zero sink rate");
@@ -574,6 +467,12 @@ static int asrc_params(struct comp_dev *dev,
 	}
 
 	component_set_nearest_period_frames(dev, cd->sink_rate);
+
+	err = asrc_verify_params(mod);
+	if (err < 0) {
+		comp_err(dev, "asrc_params(): pcm params verification failed.");
+		return -EINVAL;
+	}
 	cd->sink_frames = dev->frames;
 	cd->source_frames = ceil_divide(dev->frames * cd->source_rate,
 					cd->sink_rate);
@@ -598,6 +497,7 @@ static int asrc_params(struct comp_dev *dev,
 static int asrc_dai_find(struct comp_dev *dev, struct comp_data *cd)
 {
 	struct comp_buffer *sourceb, *sinkb;
+	struct comp_dev *dev_dai;
 	int pid;
 
 	/* Get current pipeline ID and walk to find the DAI */
@@ -608,45 +508,44 @@ static int asrc_dai_find(struct comp_dev *dev, struct comp_data *cd)
 		do {
 			sinkb = list_first_item(&dev->bsink_list, struct comp_buffer, source_list);
 
-			dev = sinkb->sink;
+			dev_dai = sinkb->sink;
 
-			if (!dev) {
-				comp_cl_err(&comp_asrc, "At end, no DAI found.");
+			if (!dev_dai) {
+				comp_err(dev, "At end, no DAI found.");
 				return -EINVAL;
 			}
 
-			if (dev_comp_pipe_id(dev) != pid) {
-				comp_cl_err(&comp_asrc, "No DAI sink in pipeline.");
+			if (dev_comp_pipe_id(dev_dai) != pid) {
+				comp_err(dev, "No DAI sink in pipeline.");
 				return -EINVAL;
 			}
 
-		} while (dev_comp_type(dev) != SOF_COMP_DAI);
+		} while (dev_comp_type(dev_dai) != SOF_COMP_DAI);
 	} else {
 		/* In pull mode check if source component is DAI */
 		do {
 			sourceb = list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
 
-			dev = sourceb->source;
+			dev_dai = sourceb->source;
 
-			if (!dev) {
-				comp_cl_err(&comp_asrc, "At beginning, no DAI found.");
+			if (!dev_dai) {
+				comp_err(dev, "At beginning, no DAI found.");
 				return -EINVAL;
 			}
 
-			if (dev_comp_pipe_id(dev) != pid) {
-				comp_cl_err(&comp_asrc, "No DAI source in pipeline.");
+			if (dev_comp_pipe_id(dev_dai) != pid) {
+				comp_err(dev, "No DAI source in pipeline.");
 				return -EINVAL;
 			}
-		} while (dev_comp_type(dev) != SOF_COMP_DAI);
+		} while (dev_comp_type(dev_dai) != SOF_COMP_DAI);
 	}
 
 	/* Point dai_dev to found DAI */
-	cd->dai_dev = dev;
+	cd->dai_dev = dev_dai;
 
 	return 0;
 }
 
-#if CONFIG_IPC_MAJOR_4
 static int asrc_dai_configure_timestamp(struct comp_data *cd)
 {
 	if (cd->dai_dev) {
@@ -695,52 +594,17 @@ static int asrc_dai_get_timestamp(struct comp_data *cd,
 
 	return -EINVAL;
 }
-#else
-static int asrc_dai_configure_timestamp(struct comp_data *cd)
+
+static int asrc_trigger(struct processing_module *mod, int cmd)
 {
-	if (cd->dai_dev)
-		return cd->dai_dev->drv->ops.dai_ts_config(cd->dai_dev);
-
-	return -EINVAL;
-}
-
-static int asrc_dai_start_timestamp(struct comp_data *cd)
-{
-	if (cd->dai_dev)
-		return cd->dai_dev->drv->ops.dai_ts_start(cd->dai_dev);
-
-	return -EINVAL;
-}
-
-static int asrc_dai_stop_timestamp(struct comp_data *cd)
-{
-	if (cd->dai_dev)
-		return cd->dai_dev->drv->ops.dai_ts_stop(cd->dai_dev);
-
-	return -EINVAL;
-}
-
-#if CONFIG_ZEPHYR_NATIVE_DRIVERS
-	static int asrc_dai_get_timestamp(struct comp_data *cd, struct dai_ts_data *tsd)
-#else
-	static int asrc_dai_get_timestamp(struct comp_data *cd, struct timestamp_data *tsd)
-#endif
-{
-	if (!cd->dai_dev)
-		return -EINVAL;
-
-	return cd->dai_dev->drv->ops.dai_ts_get(cd->dai_dev, tsd);
-}
-#endif
-static int asrc_trigger(struct comp_dev *dev, int cmd)
-{
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd =  module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	int ret;
 
-	comp_info(dev, "asrc_trigger()");
+	comp_info(dev, "asrc_trigger(), dev->ipc_config.type %d", dev->ipc_config.type);
 
 	/* Enable timestamping in pipeline DAI */
-	if (cmd == COMP_TRIGGER_START && cd->track_drift) {
+	if (cd->track_drift) {
 		ret = asrc_dai_find(dev, cd);
 		if (ret) {
 			comp_err(dev, "No DAI found to track");
@@ -756,13 +620,15 @@ static int asrc_trigger(struct comp_dev *dev, int cmd)
 			return ret;
 		}
 	}
-
-	return comp_set_state(dev, cmd);
+	return 0;
 }
 
-static int asrc_prepare(struct comp_dev *dev)
+static int asrc_prepare(struct processing_module *mod,
+			struct sof_source **sources, int num_of_sources,
+			struct sof_sink **sinks, int num_of_sinks)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd =  module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	struct comp_buffer *sourceb, *sinkb;
 	uint32_t source_period_bytes;
 	uint32_t sink_period_bytes;
@@ -776,18 +642,18 @@ static int asrc_prepare(struct comp_dev *dev)
 
 	comp_info(dev, "asrc_prepare()");
 
-	ret = comp_set_state(dev, COMP_TRIGGER_PREPARE);
+	ret = asrc_params(mod);
 	if (ret < 0)
 		return ret;
 
-	if (ret == COMP_STATUS_STATE_ALREADY_SET)
-		return PPL_STATUS_PATH_STOP;
-
-	/* SRC component will only ever have 1 source and 1 sink buffer */
+	/* ASRC component will only ever have 1 source and 1 sink buffer */
 	sourceb = list_first_item(&dev->bsource_list,
 				  struct comp_buffer, sink_list);
 	sinkb = list_first_item(&dev->bsink_list,
 				struct comp_buffer, source_list);
+
+	audio_stream_init_alignment_constants(1, 1, &sourceb->stream);
+	audio_stream_init_alignment_constants(1, 1, &sinkb->stream);
 
 	/* get source data format and period bytes */
 	cd->source_format = audio_stream_get_frm_fmt(&sourceb->stream);
@@ -988,7 +854,7 @@ static int asrc_control_loop(struct comp_dev *dev, struct comp_data *cd)
 
 	/* Prevent divide by zero */
 	if (delta_sample == 0 || tsd.walclk_rate == 0) {
-		comp_cl_err(&comp_asrc, "asrc_control_loop(), DAI timestamp failed");
+		comp_err(dev, "asrc_control_loop(), DAI timestamp failed");
 		return -EINVAL;
 	}
 
@@ -1010,38 +876,21 @@ static int asrc_control_loop(struct comp_dev *dev, struct comp_data *cd)
 	 */
 	cd->skew_min = MIN(cd->skew, cd->skew_min);
 	cd->skew_max = MAX(cd->skew, cd->skew_max);
-	comp_cl_dbg(&comp_asrc, "skew %d %d %d %d", delta_sample, delta_ts,
+	comp_dgb(dev, "skew %d %d %d %d", delta_sample, delta_ts,
 		    skew, cd->skew);
 	return 0;
 }
 
-static void asrc_process(struct comp_dev *dev, struct comp_buffer *source,
-			 struct comp_buffer *sink)
-{
-	struct comp_data *cd = comp_get_drvdata(dev);
-	int consumed = 0;
-	int produced = 0;
-
-	/* consumed bytes are not known at this point */
-	buffer_stream_invalidate(source, audio_stream_get_size(&source->stream));
-	cd->asrc_func(dev, &source->stream, &sink->stream, &consumed,
-		      &produced);
-	buffer_stream_writeback(sink, produced * audio_stream_frame_bytes(&sink->stream));
-
-	comp_dbg(dev, "asrc_copy(), consumed = %u,  produced = %u",
-		 consumed, produced);
-
-	comp_update_buffer_consume(source, consumed *
-				   audio_stream_frame_bytes(&source->stream));
-	comp_update_buffer_produce(sink, produced *
-				   audio_stream_frame_bytes(&sink->stream));
-}
-
 /* copy and process stream data from source to sink buffers */
-static int asrc_copy(struct comp_dev *dev)
+static int asrc_process(struct processing_module *mod,
+			     struct input_stream_buffer *input_buffers, int num_input_buffers,
+			     struct output_stream_buffer *output_buffers, int num_output_buffers)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	struct comp_buffer *source, *sink;
+	struct audio_stream *source_s = input_buffers[0].data;
+	struct audio_stream *sink_s = output_buffers[0].data;
 	int frames_src;
 	int frames_snk;
 	int ret;
@@ -1058,8 +907,8 @@ static int asrc_copy(struct comp_dev *dev)
 	sink = list_first_item(&dev->bsink_list, struct comp_buffer,
 			       source_list);
 
-	frames_src = audio_stream_get_avail_frames(&source->stream);
-	frames_snk = audio_stream_get_free_frames(&sink->stream);
+	frames_src = audio_stream_get_avail_frames(source_s);
+	frames_snk = audio_stream_get_free_frames(sink_s);
 
 	if (cd->mode == ASRC_OM_PULL) {
 		/* Let ASRC access max number of source frames in pull mode.
@@ -1084,17 +933,31 @@ static int asrc_copy(struct comp_dev *dev)
 		cd->source_frames = MIN(cd->source_frames, frames_src);
 	}
 
-	if (cd->source_frames && cd->sink_frames)
-		asrc_process(dev, source, sink);
+	if (cd->source_frames && cd->sink_frames) {
+		int consumed = 0;
+		int produced = 0;
+
+		/* consumed bytes are not known at this point */
+		buffer_stream_invalidate(source, audio_stream_get_size(source_s));
+		cd->asrc_func(mod, source_s, sink_s, &consumed,
+				&produced);
+		buffer_stream_writeback(sink, produced * audio_stream_frame_bytes(sink_s));
+
+		comp_dbg(dev, "asrc_copy(), consumed = %u,  produced = %u", consumed, produced);
+
+		output_buffers[0].size = produced * audio_stream_frame_bytes(sink_s);
+		input_buffers[0].consumed = consumed * audio_stream_frame_bytes(source_s);
+	}
+
 
 	return 0;
 }
 
-static int asrc_reset(struct comp_dev *dev)
+static int asrc_reset(struct processing_module *mod)
 {
-	struct comp_data *cd = comp_get_drvdata(dev);
+	struct comp_dev *dev = mod->dev;
+	struct comp_data *cd = module_get_private_data(mod);
 
-	comp_info(dev, "asrc_reset()");
 	comp_info(dev, "asrc_reset(), skew_min=%d, skew_max=%d", cd->skew_min,
 		  cd->skew_max);
 
@@ -1110,38 +973,18 @@ static int asrc_reset(struct comp_dev *dev)
 	cd->asrc_obj = NULL;
 	cd->buf = NULL;
 
-	comp_set_state(dev, COMP_TRIGGER_RESET);
 	return 0;
 }
 
-static const struct comp_driver comp_asrc = {
-	.type = SOF_COMP_ASRC,
-	.uid = SOF_RT_UUID(asrc_uuid),
-	.tctx = &asrc_tr,
-	.ops = {
-		.create = asrc_new,
-		.free = asrc_free,
-		.params = asrc_params,
-		.cmd = asrc_cmd,
-		.trigger = asrc_trigger,
-		.copy = asrc_copy,
-		.prepare = asrc_prepare,
-		.reset = asrc_reset,
-#if CONFIG_IPC_MAJOR_4
-		.get_attribute = asrc_get_attribute,
-#endif
-	},
+static const struct module_interface asrc_interface = {
+	.init = asrc_init,
+	.prepare = asrc_prepare,
+	.process_audio_stream = asrc_process,
+	.trigger = asrc_trigger,
+	.set_configuration = asrc_set_config,
+	.reset = asrc_reset,
+	.free = asrc_free,
 };
 
-static SHARED_DATA struct comp_driver_info comp_asrc_info = {
-	.drv = &comp_asrc,
-};
-
-UT_STATIC void sys_comp_asrc_init(void)
-{
-	comp_register(platform_shared_get(&comp_asrc_info,
-					  sizeof(comp_asrc_info)));
-}
-
-DECLARE_MODULE(sys_comp_asrc_init);
-SOF_MODULE_INIT(asrc, sys_comp_asrc_init);
+DECLARE_MODULE_ADAPTER(asrc_interface, asrc_uuid, asrc_tr);
+SOF_MODULE_INIT(asrc, sys_comp_module_asrc_interface_init);

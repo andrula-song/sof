@@ -1393,6 +1393,17 @@ int module_adapter_trigger(struct comp_dev *dev, int cmd)
 		dev->state = COMP_STATE_ACTIVE;
 		return PPL_STATUS_PATH_STOP;
 	}
+	/*
+	 * Handle ASRC DAI and timestamp ops find function separately
+	 */
+	if (cmd == COMP_TRIGGER_START) {
+		struct module_data *md = &mod->priv;
+		int ret;
+
+		ret = md->ops->trigger(mod, cmd);
+		if (ret)
+			return ret;
+	}
 
 	return module_adapter_set_state(mod, dev, cmd);
 }

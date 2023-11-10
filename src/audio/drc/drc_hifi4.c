@@ -23,6 +23,18 @@
 #define TWELVE_Q21     25165824   /* Q_CONVERT_FLOAT(12.0f, 21) */
 #define HALF_Q24       8388608    /* Q_CONVERT_FLOAT(0.5f, 24) */
 #define NEG_TWO_DB_Q30 852903424  /* Q_CONVERT_FLOAT(0.7943282347242815f, 30) */
+#define LSHIFT_QX31_QY20_QZ27 7   /*drc_get_lshift(31, 20, 27)*/
+#define LSHIFT_QX24_QY20_QZ24 11  /*drc_get_lshift(24, 20, 24)*/
+#define LSHIFT_QX24_QY20_QZ30 17  /*drc_get_lshift(24, 20, 30)*/
+#define LSHIFT_QX30_QY20_QZ30 11  /*drc_get_lshift(30, 20, 30)*/
+#define LSHIFT_QX30_QY30_QZ30 1   /*drc_get_lshift(30, 30, 30)*/
+#define LSHIFT_QX26_QY30_QZ27 2   /*drc_get_lshift(26, 30, 27)*/
+#define LSHIFT_QX21_QY30_QZ24 4   /*drc_get_lshift(21, 30, 24)*/
+#define LSHIFT_QX21_QY21_QZ21 10  /*drc_get_lshift(21, 21, 21)*/
+#define LSHIFT_QX30_QY16_QZ24 9   /*drc_get_lshift(31, 16, 24)*/
+#define LSHIFT_QX15_QY24_QZ15 7  /*drc_get_lshift(15, 24, 15)*/
+#define LSHIFT_QX31_QY24_QZ31 7   /*drc_get_lshift(31, 24, 31)*/
+
 
 /* This is the knee part of the compression curve. Returns the output level
  * given the input level x.
@@ -52,9 +64,9 @@ static int32_t knee_curveK(const struct sof_drc_params *p, int32_t x)
 	 *	 beta = -expf(k * linear_threshold) / k
 	 *	 gamma = -k * x
 	 */
-	gamma = drc_mult_lshift(x, -p->K, drc_get_lshift(31, 20, 27));
+	gamma = drc_mult_lshift(x, -p->K, LSHIFT_QX31_QY20_QZ27);
 	knee_exp_gamma = exp_fixed(gamma);
-	knee_curve_k = drc_mult_lshift(p->knee_beta, knee_exp_gamma, drc_get_lshift(24, 20, 24));
+	knee_curve_k = drc_mult_lshift(p->knee_beta, knee_exp_gamma, LSHIFT_QX24_QY20_QZ24);
 	knee_curve_k = AE_ADD32(knee_curve_k, p->knee_alpha);
 	return knee_curve_k;
 }
@@ -76,7 +88,7 @@ static int32_t volume_gain(const struct sof_drc_params *p, int32_t x)
 			return ONE_Q30;
 		/* y = knee_curveK(x) / x */
 		y = drc_mult_lshift(knee_curveK(p, x), drc_inv_fixed(x, 31, 20),
-				    drc_get_lshift(24, 20, 30));
+				    LSHIFT_QX24_QY20_QZ30);
 	} else {
 		/* Constant ratio after knee.
 		 * log(y/y0) = s * log(x/x0)
@@ -89,8 +101,8 @@ static int32_t volume_gain(const struct sof_drc_params *p, int32_t x)
 		tmp = AE_SRAI32R(x, 5); /* Q1.31 -> Q5.26 */
 		tmp = drc_log_fixed(tmp); /* Q6.26 */
 		tmp2 = AE_SUB32(p->slope, ONE_Q30); /* Q2.30 */
-		exp_knee = exp_fixed(drc_mult_lshift(tmp, tmp2, drc_get_lshift(26, 30, 27)));
-		y = drc_mult_lshift(p->ratio_base, exp_knee, drc_get_lshift(30, 20, 30));
+		exp_knee = exp_fixed(drc_mult_lshift(tmp, tmp2, LSHIFT_QX26_QY30_QZ27));
+		y = drc_mult_lshift(p->ratio_base, exp_knee, LSHIFT_QX30_QY20_QZ30);
 	}
 
 	return y;
@@ -167,15 +179,15 @@ void drc_update_detector_average(struct drc_state *state,
 		if (is_release) {
 			if ((int32_t)gain > NEG_TWO_DB_Q30) {
 				tmp = drc_mult_lshift(gain_diff, p->sat_release_rate_at_neg_two_db,
-						      drc_get_lshift(30, 30, 30));
+						      LSHIFT_QX30_QY30_QZ30);
 			} else {
 				gain = AE_SRAI32R(gain, 4); /* Q2.30 -> Q6.26 */
 				db_per_frame = drc_mult_lshift(drc_lin2db_fixed(gain),
 							       p->sat_release_frames_inv_neg,
-							       drc_get_lshift(21, 30, 24));
+							       LSHIFT_QX21_QY30_QZ24);
 				sat_release_rate = AE_SUB32(db2lin_fixed(db_per_frame), ONE_Q20);
 				tmp = drc_mult_lshift(gain_diff, sat_release_rate,
-						      drc_get_lshift(30, 20, 30));
+						      LSHIFT_QX30_QY20_QZ30);
 			}
 			detector_average = AE_ADD32(detector_average, tmp);
 		} else {
@@ -211,7 +223,6 @@ void drc_update_envelope(struct drc_state *state, const struct sof_drc_params *p
 	ae_f32 tmp2;
 	int32_t scaled_desired_gain;
 	int32_t eff_atten_diff_db;
-	int32_t lshift;
 	int32_t is_releasing;
 	int32_t is_bad_db;
 
@@ -249,10 +260,9 @@ void drc_update_envelope(struct drc_state *state, const struct sof_drc_params *p
 		 * Normal values for the polynomial coefficients would create a
 		 * monotonically increasing function.
 		 */
-		lshift = drc_get_lshift(21, 21, 21);
-		x2 = drc_mult_lshift(x, x, lshift); /* Q11.21 */
-		x3 = drc_mult_lshift(x2, x, lshift); /* Q11.21 */
-		x4 = drc_mult_lshift(x2, x2, lshift); /* Q11.21 */
+		x2 = drc_mult_lshift(x, x, LSHIFT_QX21_QY21_QZ21); /* Q11.21 */
+		x3 = drc_mult_lshift(x2, x, LSHIFT_QX21_QY21_QZ21); /* Q11.21 */
+		x4 = drc_mult_lshift(x2, x2, LSHIFT_QX21_QY21_QZ21); /* Q11.21 */
 
 		release_frames_f64 = AE_CVT48A32(p->kA); /* Q20.12 -> Q36.28 */
 		release_frames_f64 = AE_SRAI64(release_frames_f64, 10); /* Q36.28 -> Q46.18 */
@@ -266,8 +276,8 @@ void drc_update_envelope(struct drc_state *state, const struct sof_drc_params *p
 		/* db_per_frame = kSpacingDb / release_frames */
 		db_per_frame = drc_inv_fixed(release_frames, 12, 30); /* Q2.30 */
 		tmp = p->kSpacingDb << 16; /* Q16.16 */
-		lshift = drc_get_lshift(30, 16, 24);
-		db_per_frame = drc_mult_lshift(db_per_frame, tmp, lshift); /* Q8.24 */
+		/* Q8.24 */
+		db_per_frame = drc_mult_lshift(db_per_frame, tmp, LSHIFT_QX30_QY16_QZ24);
 		envelope_rate = db2lin_fixed(db_per_frame); /* Q12.20 */
 	} else {
 		/* Attack mode - compression_diff_db should be positive dB */
@@ -314,14 +324,14 @@ void drc_compress_output(struct drc_state *state,
 	ae_f32 c, base, r, r2, r4; /* Q2.30 */
 	ae_f32 post_warp_compressor_gain;
 	ae_f32 total_gain;
-	ae_f32 tmp;
-
 	int i, j, ch, inc;
 	int16_t *sample16_p; /* for s16 format case */
 	int32_t *sample32_p; /* for s24 and s32 format cases */
 	int32_t sample;
-	int32_t lshift;
 	int is_2byte = (nbyte == 2); /* otherwise is 4-bytes */
+	ae_f32 tmp;
+	ae_f64 tmp64;
+	ae_f32 master_linear_gain = p->master_linear_gain;
 
 	/* Exponential approach to desired gain. */
 	if (state->envelope_rate < ONE_Q30) {
@@ -329,12 +339,11 @@ void drc_compress_output(struct drc_state *state,
 		c = AE_SUB32(state->compressor_gain, state->scaled_desired_gain);
 		base = state->scaled_desired_gain;
 		r = AE_SUB32(ONE_Q30, state->envelope_rate);
-		lshift = drc_get_lshift(30, 30, 30);
-		x[0] = drc_mult_lshift(c, r, lshift);
+		x[0] = drc_mult_lshift(c, r, LSHIFT_QX30_QY30_QZ30);
 		for (j = 1; j < 4; j++)
-			x[j] = drc_mult_lshift(x[j - 1], r, lshift);
-		r2 = drc_mult_lshift(r, r, lshift);
-		r4 = drc_mult_lshift(r2, r2, lshift);
+			x[j] = drc_mult_lshift(x[j - 1], r, LSHIFT_QX30_QY30_QZ30);
+		r2 = drc_mult_lshift(r, r, LSHIFT_QX30_QY30_QZ30);
+		r4 = drc_mult_lshift(r2, r2, LSHIFT_QX30_QY30_QZ30);
 
 		i = 0;
 		inc = 0;
@@ -348,20 +357,18 @@ void drc_compress_output(struct drc_state *state,
 					post_warp_compressor_gain = drc_sin_fixed(tmp); /* Q1.31 */
 
 					/* Calculate total gain using master gain. */
-					lshift = drc_get_lshift(24, 31, 24);
-					total_gain = drc_mult_lshift(p->master_linear_gain,
-								     post_warp_compressor_gain,
-								     lshift); /* Q8.24 */
+					tmp64 = AE_MULF32R_LL(master_linear_gain,
+							      post_warp_compressor_gain);
+					total_gain = AE_ROUND32F48SSYM(tmp64); /* Q8.24 */
 
 					/* Apply final gain. */
-					lshift = drc_get_lshift(15, 24, 15);
 					for (ch = 0; ch < nch; ch++) {
 						sample16_p =
 							(int16_t *)state->pre_delay_buffers[ch] +
 								div_start + inc;
 						sample = (int32_t)*sample16_p;
 						sample = drc_mult_lshift(sample, total_gain,
-									 lshift);
+									 LSHIFT_QX15_QY24_QZ15);
 						*sample16_p = sat_int16(sample);
 					}
 					inc++;
@@ -370,9 +377,8 @@ void drc_compress_output(struct drc_state *state,
 				if (++i == count)
 					break;
 
-				lshift = drc_get_lshift(30, 30, 30);
 				for (j = 0; j < 4; j++)
-					x[j] = drc_mult_lshift(x[j], r4, lshift);
+					x[j] = drc_mult_lshift(x[j], r4, LSHIFT_QX30_QY30_QZ30);
 			}
 		} else { /* 4 bytes per sample */
 			while (1) {
@@ -384,20 +390,18 @@ void drc_compress_output(struct drc_state *state,
 					post_warp_compressor_gain = drc_sin_fixed(tmp); /* Q1.31 */
 
 					/* Calculate total gain using master gain. */
-					lshift = drc_get_lshift(24, 31, 24);
-					total_gain = drc_mult_lshift(p->master_linear_gain,
-								     post_warp_compressor_gain,
-								     lshift); /* Q8.24 */
+					tmp64 = AE_MULF32R_LL(master_linear_gain,
+							      post_warp_compressor_gain);
+					total_gain = AE_ROUND32F48SSYM(tmp64);/* Q8.24 */
 
 					/* Apply final gain. */
-					lshift = drc_get_lshift(31, 24, 31);
 					for (ch = 0; ch < nch; ch++) {
 						sample32_p =
 							(int32_t *)state->pre_delay_buffers[ch] +
 								div_start + inc;
 						sample = *sample32_p;
 						sample = drc_mult_lshift(sample, total_gain,
-									 lshift);
+									 LSHIFT_QX31_QY24_QZ31);
 						*sample32_p = sample;
 					}
 					inc++;
@@ -406,9 +410,8 @@ void drc_compress_output(struct drc_state *state,
 				if (++i == count)
 					break;
 
-				lshift = drc_get_lshift(30, 30, 30);
 				for (j = 0; j < 4; j++)
-					x[j] = drc_mult_lshift(x[j], r4, lshift);
+					x[j] = drc_mult_lshift(x[j], r4, LSHIFT_QX30_QY30_QZ30);
 			}
 		}
 
@@ -418,12 +421,11 @@ void drc_compress_output(struct drc_state *state,
 		/* Release - exponentially increase gain to 1.0 */
 		c = state->compressor_gain;
 		r = state->envelope_rate;
-		lshift = drc_get_lshift(30, 30, 30);
-		x[0] = drc_mult_lshift(c, r, lshift);
+		x[0] = drc_mult_lshift(c, r, LSHIFT_QX30_QY30_QZ30);
 		for (j = 1; j < 4; j++)
-			x[j] = drc_mult_lshift(x[j - 1], r, lshift);
-		r2 = drc_mult_lshift(r, r, lshift);
-		r4 = drc_mult_lshift(r2, r2, lshift);
+			x[j] = drc_mult_lshift(x[j - 1], r, LSHIFT_QX30_QY30_QZ30);
+		r2 = drc_mult_lshift(r, r, LSHIFT_QX30_QY30_QZ30);
+		r4 = drc_mult_lshift(r2, r2, LSHIFT_QX30_QY30_QZ30);
 
 		i = 0;
 		inc = 0;
@@ -436,20 +438,18 @@ void drc_compress_output(struct drc_state *state,
 					post_warp_compressor_gain = drc_sin_fixed(x[j]); /* Q1.31 */
 
 					/* Calculate total gain using master gain. */
-					lshift = drc_get_lshift(24, 31, 24);
-					total_gain = drc_mult_lshift(p->master_linear_gain,
-								     post_warp_compressor_gain,
-								     lshift); /* Q8.24 */
+					tmp64 = AE_MULF32R_LL(master_linear_gain,
+							      post_warp_compressor_gain);
+					total_gain = AE_ROUND32F48SSYM(tmp64);/* Q8.24 */
 
 					/* Apply final gain. */
-					lshift = drc_get_lshift(15, 24, 15);
 					for (ch = 0; ch < nch; ch++) {
 						sample16_p =
 							(int16_t *)state->pre_delay_buffers[ch] +
 								div_start + inc;
 						sample = (int32_t)*sample16_p;
 						sample = drc_mult_lshift(sample, total_gain,
-									 lshift);
+									 LSHIFT_QX15_QY24_QZ15);
 						*sample16_p = sat_int16(sample);
 					}
 					inc++;
@@ -458,9 +458,8 @@ void drc_compress_output(struct drc_state *state,
 				if (++i == count)
 					break;
 
-				lshift = drc_get_lshift(30, 30, 30);
 				for (j = 0; j < 4; j++) {
-					tmp = drc_mult_lshift(x[j], r4, lshift);
+					tmp = drc_mult_lshift(x[j], r4, LSHIFT_QX30_QY30_QZ30);
 					x[j] = AE_MIN32(ONE_Q30, tmp);
 				}
 			}
@@ -473,20 +472,18 @@ void drc_compress_output(struct drc_state *state,
 					post_warp_compressor_gain = drc_sin_fixed(x[j]); /* Q1.31 */
 
 					/* Calculate total gain using master gain. */
-					lshift = drc_get_lshift(24, 31, 24);
-					total_gain = drc_mult_lshift(p->master_linear_gain,
-								     post_warp_compressor_gain,
-								     lshift); /* Q8.24 */
+					tmp64 = AE_MULF32R_LL(master_linear_gain,
+							      post_warp_compressor_gain);
+					total_gain = AE_ROUND32F48SSYM(tmp64);/* Q8.24 */
 
 					/* Apply final gain. */
-					lshift = drc_get_lshift(31, 24, 31);
 					for (ch = 0; ch < nch; ch++) {
 						sample32_p =
 							(int32_t *)state->pre_delay_buffers[ch] +
 								div_start + inc;
 						sample = *sample32_p;
 						sample = drc_mult_lshift(sample, total_gain,
-									 lshift);
+									 LSHIFT_QX31_QY24_QZ31);
 						*sample32_p = sample;
 					}
 					inc++;
@@ -495,9 +492,8 @@ void drc_compress_output(struct drc_state *state,
 				if (++i == count)
 					break;
 
-				lshift = drc_get_lshift(30, 30, 30);
 				for (j = 0; j < 4; j++) {
-					tmp = drc_mult_lshift(x[j], r4, lshift);
+					tmp = drc_mult_lshift(x[j], r4, LSHIFT_QX30_QY30_QZ30);
 					x[j] = AE_MIN32(ONE_Q30, tmp);
 				}
 			}

@@ -119,4 +119,8 @@ PREPROCESS_PLUGINS=nhlt,NHLT_BIN=nhlt-sof-tgl-nocodec-crossover.bin,EFX_CROSSOVE
 # Topology to test RTC AEC
 "development/cavs-nocodec-rtcaec\;sof-tgl-nocodec-rtcaec\;PLATFORM=tgl,\
 PREPROCESS_PLUGINS=nhlt,NHLT_BIN=nhlt-sof-tgl-nocodec-rtcaec.bin"
+
+"development/cavs-nocodec-src\;sof-mtl-nocodec-src\;PLATFORM=mtl,NUM_DMICS=0,PDM1_MIC_A_ENABLE=0,PDM1_MIC_B_ENABLE=0,\
+PREPROCESS_PLUGINS=nhlt,NHLT_BIN=nhlt-sof-mtl-nocodec-src.bin,DEEPBUFFER_FW_DMA_MS=100,\
+DEEPBUFFER_D0I3_COMPATIBLE=true"
 )
